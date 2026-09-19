@@ -1369,6 +1369,10 @@ open class OpenAPSBoostPlugin @Inject constructor(
         // ---- Build the OapsProfileBoost ----
 
         val oapsProfile = OapsProfileBoost(
+            // Tells the engine which mechanism owns sensitivity, so a static ISF profile gets the
+            // autosens division that stock applies rather than the dynISF arm. Same flag that
+            // selectSensitivityRatio keys on above.
+            dynIsfMode = useTdd,
             // Standard oref1 fields
             dia = 0.0,
             min_5m_carbimpact = 0.0,

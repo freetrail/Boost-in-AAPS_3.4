@@ -90,6 +90,12 @@ data class OapsProfileBoost(
     // that recentLowBG misses. Threshold ~800 distinguishes fast-carb braking from IOB decay.
     var recentBrakingProduct: Double,
 
+    // True when the TDD-driven dynamic ISF model owns sensitivity. When false the profile ISF is
+    // static and the autosens ratio is what adapts it, which is the branch stock DetermineBasalSMB
+    // takes (`profile.sens / sensitivityRatio`). Defaulted so the other Boost plugins that build
+    // this profile keep their existing behaviour until they are moved over deliberately.
+    var dynIsfMode: Boolean = false,
+
     // Boost debug context (not used by algorithm, displayed in Script Debug)
     var boostDebugReason: String = "",
     var isfDebugReason: String = "",
