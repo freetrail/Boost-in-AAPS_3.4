@@ -54,6 +54,41 @@ class DetermineBasalBoost @Inject constructor(
             bg < 170.0 -> 0.3 + 0.7 * (bg - 120.0) / 50.0
             else       -> 1.0
         }
+
+        /**
+         * Post-rescue TIGHT-RAMP trial — day-level arm assignment
+         * (pre-reg: backtesting/protocols/2026-08_postrescue_tight_ramp_PREREG.md).
+         *
+         * Returns true when [dayIndex] (local days since epoch) is a TREATMENT day for this
+         * install's [seed]. Pure and deterministic, so the offline analysis reproduces every
+         * arm from the seed alone rather than trusting a logged flag.
+         *
+         * Balanced in 7-day blocks — 4 treatment days in even blocks, 3 in odd — so the arms
+         * stay even over any fortnight. The positions within a block are shuffled per block, so
+         * arm is never confounded with weekday (the failure mode called out in the night-mode
+         * pre-registration).
+         */
+        fun tightRampArm(seed: String, dayIndex: Long): Boolean {
+            if (seed.isEmpty()) return false
+            val block = Math.floorDiv(dayIndex, 7L)
+            val pos = Math.floorMod(dayIndex, 7L).toInt()
+            val treatDays = if (Math.floorMod(block, 2L) == 0L) 4 else 3
+            val order = (0..6).sortedBy { fnv1a64("$seed|$block|$it") }
+            return order.take(treatDays).contains(pos)
+        }
+
+        /** FNV-1a 64. Stable across platforms and trivially re-implementable in the analysis. */
+        fun fnv1a64(s: String): Long {
+            var h = -3750763034362895579L                 // 14695981039346656037 unsigned
+            for (ch in s) {
+                h = h xor ch.code.toLong()
+                h *= 1099511628211L
+            }
+            return h
+        }
+
+        /** Treatment-arm cap on the post-rescue scale. */
+        const val TIGHT_RAMP_CAP = 0.60
     }
 
     private val consoleError = mutableListOf<String>()
@@ -124,6 +159,33 @@ class DetermineBasalBoost @Inject constructor(
     // Boost-specific: Circadian ISF sensitivity factor
     // Cubic polynomial adjustments by time of day
     // =====================================================================
+    /**
+     * The factor a correction is sized from. Stock DetermineBasalSMB divides the profile ISF by the
+     * autosens ratio unless it is in dynISF mode; this engine had no such branch and always took the
+     * dynISF arm, so on a static ISF profile the ratio reached basal, targets and carbohydrate
+     * absorption time and never the dose itself. [autosensRatio] is autosens_data.ratio, the same
+     * value sensitivityRatio takes in determine_basal. The temp-target override applied to that
+     * later is a separate mechanism and is deliberately not folded into ISF, which is what stock does
+     * for the ordinary, no-temp-target case.
+     *
+     * Kept out of determine_basal on purpose: inlined there it took that method from 246 to 270
+     * registers and the release build failed ART verification at startup (2026-09-24,
+     * "type Double (Low Half) unexpected as arg to if-eqz/if-nez"). Add nothing to that method.
+     */
+    private fun baseSensitivity(profile: OapsProfileBoost, variableSens: Double, autosensRatio: Double): Double {
+        val baseSens =
+            if (profile.dynIsfMode || autosensRatio <= 0.0) variableSens
+            else round(profile.sens / autosensRatio, 1)
+        if (!profile.dynIsfMode) {
+            val profileSens = round(profile.sens, 1)
+            if (round(baseSens, 1) != profileSens)
+                consoleLog.add("ISF from $profileSens to ${round(baseSens, 1)} (autosens $autosensRatio)")
+            else
+                consoleLog.add("ISF unchanged: $profileSens")
+        }
+        return baseSens
+    }
+
     fun getCircadianSensitivity(hourOfDay: Int): Double {
         val now = max(hourOfDay, 0).toDouble()
         return when {
@@ -243,7 +305,13 @@ class DetermineBasalBoost @Inject constructor(
         // SMB" so legacy callers don't change inference behaviour. The plugin
         // computes this from the same getBolusesFromTimeToTime query that drives
         // recentSmbVolume60Min.
-        timeSinceLastSmbMin: Double = 720.0
+        timeSinceLastSmbMin: Double = 720.0,
+        // 2026-08-03 post-rescue TIGHT-RAMP trial (pre-registered within-user crossover). null =
+        // not enrolled, or a control day → the shipped guard runs byte-for-byte. Non-null = a
+        // treatment day: the post-rescue scale is capped at this value AND applies across the
+        // whole window instead of switching off at BG >= 170. Because the cap can only lower the
+        // scale, a treatment cycle never delivers more than the same cycle would today.
+        postRescueTightRampCap: Double? = null
     ): RT {
         consoleError.clear()
         consoleLog.clear()
@@ -396,12 +464,14 @@ class DetermineBasalBoost @Inject constructor(
         val circadian_sensitivity = getCircadianSensitivity(now)
         consoleLog.add("Circadian_sensitivity factor: $circadian_sensitivity")
 
+        val base_sens = baseSensitivity(profile, variable_sens, autosens_data.ratio)
+
         var sens: Double
         if (profile.enableCircadianISF) {
-            sens = round(variable_sens * circadian_sensitivity, 1)
+            sens = round(base_sens * circadian_sensitivity, 1)
             consoleLog.add("Circadian ISF enabled")
         } else {
-            sens = round(variable_sens, 1)
+            sens = round(base_sens, 1)
             consoleLog.add("Circadian ISF disabled")
         }
 
@@ -842,7 +912,7 @@ class DetermineBasalBoost @Inject constructor(
             // Falling: use minPredBG
             future_sens = getIsfByProfile(max(minPredBG, 1.0), profile, false)
             consoleLog.add("Future state sensitivity is $future_sens based on min predicted bg due to -ve delta")
-            rT.reason.append("Dosing sensitivity: $future_sens using eventual BG;")
+            rT.reason.append("Dosing sensitivity: $future_sens using lowest predicted BG;")
         }
         future_sens = round(future_sens, 1)
         consoleLog.add("Future sens adjusted to: $future_sens")
@@ -1675,11 +1745,18 @@ class DetermineBasalBoost @Inject constructor(
                 // cap benchmark 27%, other levers 14-19%). Cost: 9% of affected episodes
                 // are genuine post-hypo meals, median 0.8U under-delivery — episodes full
                 // dosing was not containing anyway (median peak 240 mg/dL).
-                if (inPostRescueWindow && COB == 0.0 && bg < 170.0 && microBolus > 0 && !fastCarbScaleApplied) {
-                    val prScale = postRescueReboundScale(bg)
+                // The BG < 170 gate is the SHIPPED behaviour (above 170 the guard does not apply at
+                // all — a cliff, not a relaxation). On a trial treatment day the guard instead runs
+                // across the whole window with the scale capped, which is the arm under test.
+                val tightRamp = postRescueTightRampCap != null
+                if (inPostRescueWindow && COB == 0.0 && (bg < 170.0 || tightRamp) && microBolus > 0 && !fastCarbScaleApplied) {
+                    val prScale =
+                        if (tightRamp) min(postRescueReboundScale(bg), postRescueTightRampCap!!)
+                        else postRescueReboundScale(bg)
                     val preSMB = microBolus
                     microBolus = Math.floor(microBolus * prScale * roundSMBTo) / roundSMBTo
-                    consoleError.add("Post-rescue rebound scale applied: $preSMB → $microBolus (${round(prScale * 100, 0)}%)")
+                    val armTag = if (tightRamp) " [trial:tight]" else ""
+                    consoleError.add("Post-rescue rebound scale applied$armTag: $preSMB → $microBolus (${round(prScale * 100, 0)}%)")
                     rT.reason.append("Post-rescue rebound scale ${round(prScale * 100, 0)}%: SMB ${round(preSMB, 2)} → ${round(microBolus, 2)}; ")
                 }
 

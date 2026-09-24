@@ -58,7 +58,9 @@ enum class DoubleKey(
     ApsBoostInsulinReqPct("boost_insulin_req_pct", 50.0, 30.0, 100.0, defaultedBySM = true),
     ApsBoostScale("boost_scale_value", 1.0, 0.1, 3.0, defaultedBySM = true),
     ApsBoostPercentScale("boost_percent_scale_factor", 200.0, 50.0, 500.0, defaultedBySM = true),
-    ApsBoostDynIsfVelocity("boost_dynisf_velocity", 100.0, 0.0, 100.0, defaultedBySM = true),
+    // BG impact on ISF. Set to 0 and treated as 0 whenever TDD-based ISF is off, so profile ISF is used as is;
+    // set back to the default when TDD-based ISF is switched on.
+    ApsBoostDynIsfVelocity("boost_dynisf_velocity", 100.0, 0.0, 100.0, defaultedBySM = true, dependency = BooleanKey.ApsBoostUseTdd),
     ApsBoostSleepInHours("boost_sleep_in_hrs", 2.0, 0.0, 18.0, defaultedBySM = true),
     ApsBoostInactivityPct("boost_inactivity_pct", 130.0, 100.0, 200.0, defaultedBySM = true),
     ApsBoostActivityPct("boost_activity_pct", 80.0, 30.0, 150.0, defaultedBySM = true),
@@ -82,6 +84,15 @@ enum class DoubleKey(
     // committed 1.0→2.5) so higher-insulin-need users and big meals aren't clipped.
     ApsBoostV5ConfirmedCapU("boost_v5_confirmed_cap_u", 2.5, 0.0, 7.5, defaultedBySM = true),
     ApsBoostV5CommittedCapU("boost_v5_committed_cap_u", 0.5, 0.0, 2.5, defaultedBySM = true),
+
+    // 2026-08-27 confirm tranche. Fraction delivered at the confirming cycle; the remainder is held
+    // for ten minutes and released only if the release rule clears the threshold. A fraction of 1.0
+    // makes the whole thing inert. Threshold: raising it withholds more, which is a TIGHTENING, so
+    // the auto-config raise guard already points the right way. Population median is 0.48 and the
+    // per-participant best runs 0.30 to 0.65, uninferable from anything cheap (r = -0.32 against a
+    // participant's own share of large excursions), so it is derived from their own episodes.
+    ApsBoostV5TrancheFraction("boost_v5_tranche_fraction", 0.5, 0.3, 1.0, defaultedBySM = true),
+    ApsBoostV5TrancheThreshold("boost_v5_tranche_threshold", 0.48, 0.20, 0.80, defaultedBySM = true),
     // 2026-07-20 V1-acceleration early primer: the per-user fizzle-safe base (additive allowance,
     // net-extra insulin over a confirmed meal). 0.0 = primer OFF (default until auto-config/user
     // enables). Auto-config-managed + insulin-adding (strict-TBR raise-guarded). See
