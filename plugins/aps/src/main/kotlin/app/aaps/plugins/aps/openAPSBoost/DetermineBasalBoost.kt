@@ -159,6 +159,33 @@ class DetermineBasalBoost @Inject constructor(
     // Boost-specific: Circadian ISF sensitivity factor
     // Cubic polynomial adjustments by time of day
     // =====================================================================
+    /**
+     * The factor a correction is sized from. Stock DetermineBasalSMB divides the profile ISF by the
+     * autosens ratio unless it is in dynISF mode; this engine had no such branch and always took the
+     * dynISF arm, so on a static ISF profile the ratio reached basal, targets and carbohydrate
+     * absorption time and never the dose itself. [autosensRatio] is autosens_data.ratio, the same
+     * value sensitivityRatio takes in determine_basal. The temp-target override applied to that
+     * later is a separate mechanism and is deliberately not folded into ISF, which is what stock does
+     * for the ordinary, no-temp-target case.
+     *
+     * Kept out of determine_basal on purpose: inlined there it took that method from 246 to 270
+     * registers and the release build failed ART verification at startup (2026-09-24,
+     * "type Double (Low Half) unexpected as arg to if-eqz/if-nez"). Add nothing to that method.
+     */
+    private fun baseSensitivity(profile: OapsProfileBoost, variableSens: Double, autosensRatio: Double): Double {
+        val baseSens =
+            if (profile.dynIsfMode || autosensRatio <= 0.0) variableSens
+            else round(profile.sens / autosensRatio, 1)
+        if (!profile.dynIsfMode) {
+            val profileSens = round(profile.sens, 1)
+            if (round(baseSens, 1) != profileSens)
+                consoleLog.add("ISF from $profileSens to ${round(baseSens, 1)} (autosens $autosensRatio)")
+            else
+                consoleLog.add("ISF unchanged: $profileSens")
+        }
+        return baseSens
+    }
+
     fun getCircadianSensitivity(hourOfDay: Int): Double {
         val now = max(hourOfDay, 0).toDouble()
         return when {
@@ -437,23 +464,7 @@ class DetermineBasalBoost @Inject constructor(
         val circadian_sensitivity = getCircadianSensitivity(now)
         consoleLog.add("Circadian_sensitivity factor: $circadian_sensitivity")
 
-        // The factor a correction is sized from. Stock DetermineBasalSMB divides the profile ISF by
-        // the autosens ratio unless it is in dynISF mode; this engine had no such branch and always
-        // took the dynISF arm, so on a static ISF profile the ratio reached basal, targets and
-        // carbohydrate absorption time and never the dose itself. The ratio read here is
-        // autosens_data.ratio, the same value sensitivityRatio takes below. The temp-target
-        // override applied to that later is a separate mechanism and is deliberately not folded
-        // into ISF, which is what stock does for the ordinary, no-temp-target case.
-        val base_sens =
-            if (profile.dynIsfMode || autosens_data.ratio <= 0.0) variable_sens
-            else round(profile.sens / autosens_data.ratio, 1)
-        if (!profile.dynIsfMode) {
-            val profileSens = round(profile.sens, 1)
-            if (round(base_sens, 1) != profileSens)
-                consoleLog.add("ISF from $profileSens to ${round(base_sens, 1)} (autosens ${autosens_data.ratio})")
-            else
-                consoleLog.add("ISF unchanged: $profileSens")
-        }
+        val base_sens = baseSensitivity(profile, variable_sens, autosens_data.ratio)
 
         var sens: Double
         if (profile.enableCircadianISF) {
