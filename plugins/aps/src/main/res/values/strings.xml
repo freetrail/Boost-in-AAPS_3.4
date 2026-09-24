@@ -152,7 +152,7 @@
     <string name="boost_dynisf_normal_target_title">DynISF normal target</string>
     <string name="boost_dynisf_normal_target_summary">Reference BG target for ISF calculation. Default: 99</string>
     <string name="boost_dynisf_velocity_title">BG impact on ISF (%)</string>
-    <string name="boost_dynisf_velocity_summary">Controls how much your current blood glucose level affects ISF. At 100%%, ISF is fully adjusted by BG (higher BG = stronger ISF). At 50%%, only half the BG-driven adjustment is applied. At 0%%, BG has no effect and ISF stays at the target-level value regardless of current BG. Needs TDD-based ISF: set to 0 automatically when TDD-based ISF is off. Default: 100</string>
+    <string name="boost_dynisf_velocity_summary">Controls how much your current blood glucose level affects ISF. At 100%%, ISF is fully adjusted by BG (higher BG = stronger ISF). At 50%%, only half the BG-driven adjustment is applied. At 0%%, BG has no effect and ISF stays at the target-level value regardless of current BG. Needs TDD-based ISF: set to 0 automatically when TDD-based ISF is switched off, and to 100 when it is switched on. Default: 100</string>
     <string name="boost_dynisf_bg_cap_title">DynISF BG cap</string>
     <string name="boost_dynisf_bg_cap_summary">BG above this value is softened to reduce ISF aggressiveness at very high BG. Default: 210</string>
     <string name="boost_dynisf_adjust_factor_title">TDD adjustment factor (%)</string>

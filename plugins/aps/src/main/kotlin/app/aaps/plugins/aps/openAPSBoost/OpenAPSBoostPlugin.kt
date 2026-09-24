@@ -222,9 +222,10 @@ open class OpenAPSBoostPlugin @Inject constructor(
             val adjustSens: Boolean,
             val velocityPct: Double,
             val clearedAdjustSens: Boolean,
-            val zeroedVelocity: Boolean
+            val zeroedVelocity: Boolean,
+            val restoredVelocity: Boolean
         ) {
-            val changed: Boolean get() = clearedAdjustSens || zeroedVelocity
+            val changed: Boolean get() = clearedAdjustSens || zeroedVelocity || restoredVelocity
         }
 
         /**
@@ -237,23 +238,36 @@ open class OpenAPSBoostPlugin @Inject constructor(
          * level was counted twice in the dose. With TDD off, the adjustment is therefore forced off and
          * BG impact on ISF is set to 0, so profile ISF is used as is, which is what the TDD switch
          * describes. The adjustment is also cleared once when the engine first runs under V6 after V1.
-         * Both changes remove insulin; neither can add any.
+         * When TDD-based ISF is switched on, BG impact is set back to [velocityOnPct] once, on that
+         * transition only, so a value the user then chooses with TDD on is kept.
          */
         internal fun reconcileSensitivitySettings(
             useTdd: Boolean,
             adjustSens: Boolean,
             velocityPct: Double,
-            switchedToV6: Boolean
+            switchedToV6: Boolean,
+            tddJustEnabled: Boolean = false,
+            velocityOnPct: Double = 100.0
         ): SensitivitySettings {
             val clearAdjust = adjustSens && (!useTdd || switchedToV6)
             val zeroVelocity = !useTdd && velocityPct != 0.0
+            val restoreVelocity = useTdd && tddJustEnabled && velocityPct != velocityOnPct
             return SensitivitySettings(
                 adjustSens = adjustSens && !clearAdjust,
-                velocityPct = if (zeroVelocity) 0.0 else velocityPct,
+                velocityPct = when {
+                    zeroVelocity    -> 0.0
+                    restoreVelocity -> velocityOnPct
+                    else            -> velocityPct
+                },
                 clearedAdjustSens = clearAdjust,
-                zeroedVelocity = zeroVelocity
+                zeroedVelocity = zeroVelocity,
+                restoredVelocity = restoreVelocity
             )
         }
+
+        /** True when TDD-based ISF is on now and was recorded off. No record ("") is not a transition. */
+        internal fun isTddJustEnabled(lastUseTdd: String, useTdd: Boolean): Boolean =
+            useTdd && lastUseTdd == false.toString()
 
         /** True on the first run under V6 when the engine last ran as V1, or has no record ("" counts as V1). */
         internal fun isSwitchToV6(lastEngineMode: String, v5Active: Boolean): Boolean =
@@ -338,22 +352,33 @@ open class OpenAPSBoostPlugin @Inject constructor(
      */
     private fun applySensitivitySettingsReconcile(v5Active: Boolean) {
         val lastMode = preferences.getBoostDosing(StringKey.ApsBoostLastEngineMode)
+        val lastUseTdd = preferences.getBoostDosing(StringKey.ApsBoostLastUseTdd)
+        val useTdd = preferences.getBoostDosing(BooleanKey.ApsBoostUseTdd)
+        val velocityOnPct = DoubleKey.ApsBoostDynIsfVelocity.defaultValue
         val r = reconcileSensitivitySettings(
-            useTdd = preferences.getBoostDosing(BooleanKey.ApsBoostUseTdd),
+            useTdd = useTdd,
             adjustSens = preferences.getBoostDosing(BooleanKey.ApsBoostAdjustSensitivity),
             velocityPct = preferences.getBoostDosing(DoubleKey.ApsBoostDynIsfVelocity),
-            switchedToV6 = isSwitchToV6(lastMode, v5Active)
+            switchedToV6 = isSwitchToV6(lastMode, v5Active),
+            tddJustEnabled = isTddJustEnabled(lastUseTdd, useTdd),
+            velocityOnPct = velocityOnPct
         )
         if (r.clearedAdjustSens) preferences.put(BooleanKey.ApsBoostAdjustSensitivity, false)
-        if (r.zeroedVelocity) preferences.put(DoubleKey.ApsBoostDynIsfVelocity, 0.0)
+        if (r.zeroedVelocity || r.restoredVelocity) preferences.put(DoubleKey.ApsBoostDynIsfVelocity, r.velocityPct)
         val mode = if (v5Active) ENGINE_MODE_V6 else ENGINE_MODE_V1
         if (lastMode != mode) preferences.put(StringKey.ApsBoostLastEngineMode, mode)
+        if (lastUseTdd != useTdd.toString()) preferences.put(StringKey.ApsBoostLastUseTdd, useTdd.toString())
         if (r.changed) {
             val what = listOfNotNull(
                 if (r.clearedAdjustSens) "TDD sensitivity adjustment switched off" else null,
-                if (r.zeroedVelocity) "BG impact on ISF set to 0%" else null
+                if (r.zeroedVelocity) "BG impact on ISF set to 0%" else null,
+                if (r.restoredVelocity) "BG impact on ISF set to ${velocityOnPct.toInt()}%" else null
             ).joinToString(" and ")
-            val why = if (r.zeroedVelocity || !preferences.getBoostDosing(BooleanKey.ApsBoostUseTdd)) "TDD-based ISF is off" else "V6 was enabled"
+            val why = when {
+                !useTdd            -> "TDD-based ISF is off"
+                r.restoredVelocity -> "TDD-based ISF was switched on"
+                else               -> "V6 was enabled"
+            }
             aapsLogger.info(LTag.APS, "Boost sensitivity settings: $what ($why)")
             uiInteraction.addNotification(Notification.USER_MESSAGE, "Boost: $what, because $why", Notification.LOW)
         }

@@ -79,6 +79,8 @@ enum class StringKey(
     ApsBoostVwaTddShadowState("boost_vwa_tdd_shadow_state", "", defaultedBySM = true),
     // Which plugin last ran the Boost engine ("v1" or "v6"; empty = never recorded, treated as v1).
     ApsBoostLastEngineMode("boost_last_engine_mode", "", defaultedBySM = true, exportable = false),
+    // TDD-based ISF state at the last engine run ("true"/"false"; empty = never recorded), to detect it being switched on.
+    ApsBoostLastUseTdd("boost_last_use_tdd", "", defaultedBySM = true, exportable = false),
 
     // Anticipation shadow onset history (JSON blob: rolling exercise + meal onset timestamps,
     // ~56-day window). Read/written by AnticipationShadow every Boost cycle to refit the per-user
