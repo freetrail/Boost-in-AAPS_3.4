@@ -142,9 +142,9 @@
     <string name="boost_use_tdd_title">Enable TDD-based ISF</string>
     <string name="boost_use_tdd_summary">Calculate ISF from Total Daily Dose using the logarithmic formula. When disabled, uses profile ISF directly</string>
     <string name="boost_adjust_sensitivity_title">Enable TDD sensitivity adjustment</string>
-    <string name="boost_adjust_sensitivity_summary">Adjust sensitivity ratio using 24h TDD / 7D TDD, similar to Autosens. Recommended to start with this off</string>
+    <string name="boost_adjust_sensitivity_summary">Adjust sensitivity ratio using 24h TDD / 7D TDD, similar to Autosens. Needs TDD-based ISF, and is switched off automatically when TDD-based ISF is off and when V6 is first enabled. Recommended to start with this off</string>
     <string name="boost_autosens_when_no_tdd_title">Use traditional Autosens when TDD is off</string>
-    <string name="boost_autosens_when_no_tdd_summary">When TDD-DynISF is OFF, let traditional Autosens drive basal/target/CR sensitivity (instead of the DynISF curve ratio). Requires Autosens enabled. No effect when TDD is on — TDD owns sensitivity then. The Autosens-vs-curve comparison is logged either way; start OFF and validate before enabling.</string>
+    <string name="boost_autosens_when_no_tdd_summary">When TDD-based ISF is off, let Autosens adjust basal, target and CR. Requires Autosens enabled. When this is off as well, no sensitivity adjustment is applied. No effect when TDD-based ISF is on, since TDD owns sensitivity then.</string>
     <string name="openapsama_autosens_max">Max autosens ratio</string>
     <string name="openapsama_autosens_max_summary">Default value: 1.2\nThis is a multiplier cap for autosens (and deviation sensitivity) to set how high the sensitivity ratio can go, which determines how far ISF can be lowered during resistant periods.</string>
     <string name="openapsama_autosens_min">Min autosens ratio</string>
@@ -152,7 +152,7 @@
     <string name="boost_dynisf_normal_target_title">DynISF normal target</string>
     <string name="boost_dynisf_normal_target_summary">Reference BG target for ISF calculation. Default: 99</string>
     <string name="boost_dynisf_velocity_title">BG impact on ISF (%)</string>
-    <string name="boost_dynisf_velocity_summary">Controls how much your current blood glucose level affects ISF. At 100%%, ISF is fully adjusted by BG (higher BG = stronger ISF). At 50%%, only half the BG-driven adjustment is applied. At 0%%, BG has no effect and ISF stays at the target-level value regardless of current BG. Default: 100</string>
+    <string name="boost_dynisf_velocity_summary">Controls how much your current blood glucose level affects ISF. At 100%%, ISF is fully adjusted by BG (higher BG = stronger ISF). At 50%%, only half the BG-driven adjustment is applied. At 0%%, BG has no effect and ISF stays at the target-level value regardless of current BG. Needs TDD-based ISF: set to 0 automatically when TDD-based ISF is off. Default: 100</string>
     <string name="boost_dynisf_bg_cap_title">DynISF BG cap</string>
     <string name="boost_dynisf_bg_cap_summary">BG above this value is softened to reduce ISF aggressiveness at very high BG. Default: 210</string>
     <string name="boost_dynisf_adjust_factor_title">TDD adjustment factor (%)</string>

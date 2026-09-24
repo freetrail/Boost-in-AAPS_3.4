@@ -202,7 +202,8 @@ open class OpenAPSBoostPlugin @Inject constructor(
          * TDD-DynISF and traditional oref autosens are alternative adaptation mechanisms — never both:
          *  - useTdd ON  → the TDD model (isfResultRatio = 24H/7D) owns sensitivity.
          *  - useTdd OFF + autosensWhenNoTdd → traditional oref autosens drives it (the fix).
-         *  - useTdd OFF + !autosensWhenNoTdd → legacy: the DynISF-curve ratio (in isfResultRatio).
+         *  - useTdd OFF + !autosensWhenNoTdd → isfResultRatio, which is 1.0 (or a temp-target ratio) now
+         *    that the curve ratio is no longer produced without TDD (see reconcileSensitivitySettings).
          * variable_sens (the curve ISF) is a separate lever and is unaffected by this choice.
          */
         internal fun selectSensitivityRatio(
@@ -215,6 +216,51 @@ open class OpenAPSBoostPlugin @Inject constructor(
             autosensWhenNoTdd -> orefAutosensRatio
             else              -> isfResultRatio
         }
+
+        /** Sensitivity settings after [reconcileSensitivitySettings], with what was changed. */
+        internal data class SensitivitySettings(
+            val adjustSens: Boolean,
+            val velocityPct: Double,
+            val clearedAdjustSens: Boolean,
+            val zeroedVelocity: Boolean
+        ) {
+            val changed: Boolean get() = clearedAdjustSens || zeroedVelocity
+        }
+
+        /**
+         * Settings that must not be on together (2026-09-24).
+         *
+         * Without TDD-based ISF there is no 24h/7D ratio, so "TDD sensitivity adjustment" fell back to
+         * sensNormalTarget / variableSens, which is the DynISF curve at the current BG rather than a
+         * sensitivity signal. determine_basal then treated it as autosens: at BG 130 it read 1.19 and
+         * lowered the target from 104 to 97, on top of the curve already strengthening ISF, so the BG
+         * level was counted twice in the dose. With TDD off, the adjustment is therefore forced off and
+         * BG impact on ISF is set to 0, so profile ISF is used as is, which is what the TDD switch
+         * describes. The adjustment is also cleared once when the engine first runs under V6 after V1.
+         * Both changes remove insulin; neither can add any.
+         */
+        internal fun reconcileSensitivitySettings(
+            useTdd: Boolean,
+            adjustSens: Boolean,
+            velocityPct: Double,
+            switchedToV6: Boolean
+        ): SensitivitySettings {
+            val clearAdjust = adjustSens && (!useTdd || switchedToV6)
+            val zeroVelocity = !useTdd && velocityPct != 0.0
+            return SensitivitySettings(
+                adjustSens = adjustSens && !clearAdjust,
+                velocityPct = if (zeroVelocity) 0.0 else velocityPct,
+                clearedAdjustSens = clearAdjust,
+                zeroedVelocity = zeroVelocity
+            )
+        }
+
+        /** True on the first run under V6 when the engine last ran as V1, or has no record ("" counts as V1). */
+        internal fun isSwitchToV6(lastEngineMode: String, v5Active: Boolean): Boolean =
+            v5Active && lastEngineMode != ENGINE_MODE_V6
+
+        internal const val ENGINE_MODE_V1 = "v1"
+        internal const val ENGINE_MODE_V6 = "v6"
 
         /** Outcome of the V6-override dose caps: the dose to deliver plus the reason-line breadcrumb ("" when uncapped). */
         internal data class V6OverrideCaps(val dose: Double, val capNote: String)
@@ -285,6 +331,33 @@ open class OpenAPSBoostPlugin @Inject constructor(
     }
 
     // ---- Boost-specific preference getters ----
+
+    /**
+     * Writes the result of [reconcileSensitivitySettings] back to preferences so the settings screen
+     * shows what the engine uses, and records which plugin ran the engine. Runs before any ISF read.
+     */
+    private fun applySensitivitySettingsReconcile(v5Active: Boolean) {
+        val lastMode = preferences.getBoostDosing(StringKey.ApsBoostLastEngineMode)
+        val r = reconcileSensitivitySettings(
+            useTdd = preferences.getBoostDosing(BooleanKey.ApsBoostUseTdd),
+            adjustSens = preferences.getBoostDosing(BooleanKey.ApsBoostAdjustSensitivity),
+            velocityPct = preferences.getBoostDosing(DoubleKey.ApsBoostDynIsfVelocity),
+            switchedToV6 = isSwitchToV6(lastMode, v5Active)
+        )
+        if (r.clearedAdjustSens) preferences.put(BooleanKey.ApsBoostAdjustSensitivity, false)
+        if (r.zeroedVelocity) preferences.put(DoubleKey.ApsBoostDynIsfVelocity, 0.0)
+        val mode = if (v5Active) ENGINE_MODE_V6 else ENGINE_MODE_V1
+        if (lastMode != mode) preferences.put(StringKey.ApsBoostLastEngineMode, mode)
+        if (r.changed) {
+            val what = listOfNotNull(
+                if (r.clearedAdjustSens) "TDD sensitivity adjustment switched off" else null,
+                if (r.zeroedVelocity) "BG impact on ISF set to 0%" else null
+            ).joinToString(" and ")
+            val why = if (r.zeroedVelocity || !preferences.getBoostDosing(BooleanKey.ApsBoostUseTdd)) "TDD-based ISF is off" else "V6 was enabled"
+            aapsLogger.info(LTag.APS, "Boost sensitivity settings: $what ($why)")
+            uiInteraction.addNotification(Notification.USER_MESSAGE, "Boost: $what, because $why", Notification.LOW)
+        }
+    }
 
     // Dynamic ISF
     // NOTE: all these Boost getters use preferences.getBoostDosing(...) (not .get) so Simple Mode
@@ -469,7 +542,10 @@ open class OpenAPSBoostPlugin @Inject constructor(
     ): BoostIsfResult {
         val autosensMax = preferences.get(DoubleKey.AutosensMax)
         val autosensMin = preferences.get(DoubleKey.AutosensMin)
-        val velocity = dynIsfVelocity
+        // Read-time guard for the reconcile above: with TDD off, BG has no impact on ISF and there is
+        // no sensitivity adjustment, whatever is stored.
+        val useTdd = preferences.getBoostDosing(BooleanKey.ApsBoostUseTdd)
+        val velocity = if (useTdd) dynIsfVelocity else 0.0
         val bgCap = dynIsfBgCap
         val bgNormalTarget = dynIsfNormalTarget
         val highTtRaisesSens = preferences.get(BooleanKey.ApsAutoIsfHighTtRaisesSens)
@@ -489,8 +565,7 @@ open class OpenAPSBoostPlugin @Inject constructor(
         val debug = StringBuilder()
 
         // TDD-based ISF calculation
-        val useTdd = preferences.getBoostDosing(BooleanKey.ApsBoostUseTdd)
-        val adjustSens = preferences.getBoostDosing(BooleanKey.ApsBoostAdjustSensitivity)
+        val adjustSens = useTdd && preferences.getBoostDosing(BooleanKey.ApsBoostAdjustSensitivity)
 
         if (useTdd) {
             // Fetch all TDD components — use allowMissingDays=true so partial data still works
@@ -639,10 +714,6 @@ open class OpenAPSBoostPlugin @Inject constructor(
         val sbg = ln((bgCurrent / insulinDivisor) + 1.0)
         val scaler = ln((bgNormalTarget / insulinDivisor) + 1.0) / sbg
         val variableSens = sensNormalTarget * (1 - (1 - scaler) * velocity)
-
-        if (ratio == 1.0 && adjustSens && !useTdd) {
-            ratio = sensNormalTarget / variableSens
-        }
 
         debug.append("\nVariable ISF at BG ${Round.roundTo(glucoseValue, 1.0)}: ${Round.roundTo(variableSens, 0.1)} (velocity=${Round.roundTo(velocity * 100, 1.0)}%)")
 
@@ -1099,6 +1170,8 @@ open class OpenAPSBoostPlugin @Inject constructor(
             aapsLogger.debug(LTag.APS, rh.gs(R.string.openapsma_no_glucose_data))
             return
         }
+
+        applySensitivitySettingsReconcile(v5Active)
 
         val inputConstraints = ConstraintObject(0.0, aapsLogger)
 

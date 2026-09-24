@@ -79,7 +79,10 @@ enum class BooleanKey(
     ApsBoostEnableCircadianIsf("enableCircadianISF", false, defaultedBySM = true),
     ApsBoostAllowWithHighTt("enableBoost_with_high_temptarget", false, defaultedBySM = true),
     ApsBoostUseTdd("boost_use_tdd", false, defaultedBySM = true),
-    ApsBoostAdjustSensitivity("boost_adjust_sensitivity", false, defaultedBySM = true),
+    // Only meaningful with TDD-based ISF: without a TDD there is no 24h/7D ratio, and the engine used to
+    // fall back to the DynISF curve ratio, which moves targets with BG. Forced off whenever UseTdd is off
+    // and cleared once on the first V6 run after V1 (OpenAPSBoostPlugin.reconcileSensitivitySettings).
+    ApsBoostAdjustSensitivity("boost_adjust_sensitivity", false, defaultedBySM = true, dependency = ApsBoostUseTdd),
     ApsBoostAllowAllBgSources("boost_allow_all_bg_sources", true, defaultedBySM = true),
     ApsBoostNightModeEnabled("boost_night_mode_enabled", false, defaultedBySM = true),
     ApsBoostNightModeDisableWithCob("boost_night_mode_disable_with_cob", false, defaultedBySM = true),
@@ -167,9 +170,9 @@ enum class BooleanKey(
     // ALTERNATIVE sensitivity-adaptation mechanisms — never both. When TDD is OFF (profile-anchored
     // DynISF curve), this lets traditional oref autosens drive basal/target/CR sensitivity instead of
     // the curve ratio (which is not a sensitivity signal). Requires ApsUseAutosens enabled to do
-    // anything. Default OFF = legacy behaviour preserved; the oref-vs-curve comparison is logged as
-    // shadow telemetry regardless, so it can be validated before flipping ON. No effect when TDD is ON.
-    ApsBoostAutosensWhenNoTdd("boost_autosens_when_no_tdd", false, defaultedBySM = true),
+    // anything. Default ON from 2026-09-24: with TDD off the alternative is a neutral ratio, since the
+    // curve ratio is no longer produced (ApsBoostAdjustSensitivity is forced off). No effect when TDD is ON.
+    ApsBoostAutosensWhenNoTdd("boost_autosens_when_no_tdd", true, defaultedBySM = true),
     ApsBoostHrIntegrationEnabled("boost_hr_integration_enabled", false, defaultedBySM = true),
     ApsBoostHrStressDetection("boost_hr_stress_detection", false, defaultedBySM = true),
 

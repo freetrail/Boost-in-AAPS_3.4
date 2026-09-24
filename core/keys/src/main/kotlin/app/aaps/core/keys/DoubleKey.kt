@@ -58,7 +58,8 @@ enum class DoubleKey(
     ApsBoostInsulinReqPct("boost_insulin_req_pct", 50.0, 30.0, 100.0, defaultedBySM = true),
     ApsBoostScale("boost_scale_value", 1.0, 0.1, 3.0, defaultedBySM = true),
     ApsBoostPercentScale("boost_percent_scale_factor", 200.0, 50.0, 500.0, defaultedBySM = true),
-    ApsBoostDynIsfVelocity("boost_dynisf_velocity", 100.0, 0.0, 100.0, defaultedBySM = true),
+    // BG impact on ISF. Set to 0 and treated as 0 whenever TDD-based ISF is off, so profile ISF is used as is.
+    ApsBoostDynIsfVelocity("boost_dynisf_velocity", 100.0, 0.0, 100.0, defaultedBySM = true, dependency = BooleanKey.ApsBoostUseTdd),
     ApsBoostSleepInHours("boost_sleep_in_hrs", 2.0, 0.0, 18.0, defaultedBySM = true),
     ApsBoostInactivityPct("boost_inactivity_pct", 130.0, 100.0, 200.0, defaultedBySM = true),
     ApsBoostActivityPct("boost_activity_pct", 80.0, 30.0, 150.0, defaultedBySM = true),
