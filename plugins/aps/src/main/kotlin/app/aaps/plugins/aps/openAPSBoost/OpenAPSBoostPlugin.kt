@@ -269,6 +269,25 @@ open class OpenAPSBoostPlugin @Inject constructor(
         internal fun isTddJustEnabled(lastUseTdd: String, useTdd: Boolean): Boolean =
             useTdd && lastUseTdd == false.toString()
 
+        /**
+         * ISF at target after autosens, for a static profile ISF (2026-09-24). Stock oref divides the
+         * profile ISF by the autosens ratio and uses the result for predictions and for the dose. Boost
+         * builds every sensitivity from the ISF at target, so the ratio is applied there; applied later,
+         * in determine_basal, it reached the current BGI and missed the dosing sensitivity. Not applied
+         * with TDD-based ISF (TDD owns sensitivity), with the no-TDD autosens switch off, when a temp
+         * target has set its own ratio (stock lets that replace autosens rather than stack), or for a
+         * ratio that is not positive.
+         */
+        internal fun autosensAdjustedIsf(
+            sensNormalTarget: Double,
+            useTdd: Boolean,
+            autosensWhenNoTdd: Boolean,
+            tempTargetRatio: Double,
+            orefAutosensRatio: Double
+        ): Double =
+            if (useTdd || !autosensWhenNoTdd || tempTargetRatio != 1.0 || orefAutosensRatio <= 0.0) sensNormalTarget
+            else sensNormalTarget / orefAutosensRatio
+
         /** True on the first run under V6 when the engine last ran as V1, or has no record ("" counts as V1). */
         internal fun isSwitchToV6(lastEngineMode: String, v5Active: Boolean): Boolean =
             v5Active && lastEngineMode != ENGINE_MODE_V6
@@ -563,7 +582,8 @@ open class OpenAPSBoostPlugin @Inject constructor(
         targetBg: Double,
         insulinDivisor: Int,
         glucoseValue: Double,
-        isTempTarget: Boolean
+        isTempTarget: Boolean,
+        orefAutosensRatio: Double
     ): BoostIsfResult {
         val autosensMax = preferences.get(DoubleKey.AutosensMax)
         val autosensMin = preferences.get(DoubleKey.AutosensMin)
@@ -733,6 +753,21 @@ open class OpenAPSBoostPlugin @Inject constructor(
                 debug.append("\nTT adjustment: ratio=${Round.roundTo(ratio, 0.01)} → ISF=${Round.roundTo(sensNormalTarget, 0.1)}")
                 aapsLogger.debug(LTag.APS, "Boost ISF adjusted by ${1.0 / ratio} due to TT of ${targetBg.toInt()}")
             }
+        }
+
+        // Autosens on a static profile ISF: fold the ratio into the ISF at target, which every sensitivity
+        // the engine uses is built from (predictions, current BGI and the dosing sensitivity), as stock
+        // oref does with profile.sens / sensitivityRatio.
+        val autosensSens = autosensAdjustedIsf(
+            sensNormalTarget = sensNormalTarget,
+            useTdd = useTdd,
+            autosensWhenNoTdd = preferences.getBoostDosing(BooleanKey.ApsBoostAutosensWhenNoTdd),
+            tempTargetRatio = ratio,
+            orefAutosensRatio = orefAutosensRatio
+        )
+        if (autosensSens != sensNormalTarget) {
+            debug.append("\nAutosens: ratio=${Round.roundTo(orefAutosensRatio, 0.01)} → ISF at target ${Round.roundTo(sensNormalTarget, 0.1)} to ${Round.roundTo(autosensSens, 0.1)}")
+            sensNormalTarget = autosensSens
         }
 
         // Calculate variable_sens using log formula
@@ -1346,7 +1381,8 @@ open class OpenAPSBoostPlugin @Inject constructor(
             targetBg = targetBg,
             insulinDivisor = insulinDivisor,
             glucoseValue = glucoseStatus.glucose,
-            isTempTarget = isTempTarget
+            isTempTarget = isTempTarget,
+            orefAutosensRatio = autosensResult.ratio
         )
 
         // 4. Sensitivity ratio that drives basal / target / CR scaling in determine_basal.
@@ -1467,10 +1503,9 @@ open class OpenAPSBoostPlugin @Inject constructor(
         // ---- Build the OapsProfileBoost ----
 
         val oapsProfile = OapsProfileBoost(
-            // Tells the engine which mechanism owns sensitivity, so a static ISF profile gets the
-            // autosens division that stock applies rather than the dynISF arm. Same flag that
-            // selectSensitivityRatio keys on above.
-            dynIsfMode = useTdd,
+            // variable_sens already carries the sensitivity adaptation: TDD when that is on, autosens
+            // (autosensAdjustedIsf) when it is off. The engine must not divide by the ratio again.
+            dynIsfMode = true,
             // Standard oref1 fields
             dia = 0.0,
             min_5m_carbimpact = 0.0,

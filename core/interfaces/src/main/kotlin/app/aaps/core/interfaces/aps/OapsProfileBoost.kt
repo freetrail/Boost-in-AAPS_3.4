@@ -90,10 +90,10 @@ data class OapsProfileBoost(
     // that recentLowBG misses. Threshold ~800 distinguishes fast-carb braking from IOB decay.
     var recentBrakingProduct: Double,
 
-    // True when the TDD-driven dynamic ISF model owns sensitivity. When false the profile ISF is
-    // static and the autosens ratio is what adapts it, which is the branch stock DetermineBasalSMB
-    // takes (`profile.sens / sensitivityRatio`). Defaulted so the other Boost plugins that build
-    // this profile keep their existing behaviour until they are moved over deliberately.
+    // True when variable_sens already carries the sensitivity adaptation, so the engine uses it as is.
+    // OpenAPSBoostPlugin always sets it: TDD adapts ISF when on, and autosens is folded into the ISF
+    // at target when TDD is off. When false the engine divides profile.sens by the autosens ratio,
+    // the branch stock DetermineBasalSMB takes. Defaulted false for any other builder of this profile.
     var dynIsfMode: Boolean = false,
 
     // Boost debug context (not used by algorithm, displayed in Script Debug)
