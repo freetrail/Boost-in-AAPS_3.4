@@ -912,7 +912,7 @@ class DetermineBasalBoost @Inject constructor(
             // Falling: use minPredBG
             future_sens = getIsfByProfile(max(minPredBG, 1.0), profile, false)
             consoleLog.add("Future state sensitivity is $future_sens based on min predicted bg due to -ve delta")
-            rT.reason.append("Dosing sensitivity: $future_sens using eventual BG;")
+            rT.reason.append("Dosing sensitivity: $future_sens using lowest predicted BG;")
         }
         future_sens = round(future_sens, 1)
         consoleLog.add("Future sens adjusted to: $future_sens")
